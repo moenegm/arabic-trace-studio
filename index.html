@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arabic Trace Studio</title>
+<style>
+:root{color-scheme:light;--ink:#18334e;--teal:#138c89;--cream:#fff8eb;--muted:#718092;--line:#dfe6e8;--panel:#fff;--red:#ec777a}
+*{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{padding:20px clamp(16px,4vw,48px);border-bottom:1px solid var(--line);background:#fff}h1{font-size:22px;margin:0 0 4px}header p{margin:0;color:var(--muted)}main{max-width:1440px;margin:auto;padding:20px clamp(12px,3vw,36px);display:grid;grid-template-columns:minmax(320px,1fr) minmax(300px,410px);gap:20px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 4px 18px #18334e0a}.canvas-wrap{width:min(100%,850px);margin:auto;position:relative;touch-action:none}canvas{display:block;width:100%;height:auto;aspect-ratio:1;border:1px solid var(--line);border-radius:10px;background:#fff;touch-action:none;cursor:crosshair}.canvas-note{text-align:center;color:var(--muted);font-size:12px;margin:8px 0 0}
+.toolbar,.nav,.exports,.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.toolbar{margin:0 0 12px}.nav{justify-content:space-between;margin-bottom:12px}.nav .where{font-weight:700;text-align:center;flex:1}.row{margin:10px 0}button,label.button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;padding:9px 12px;font:inherit;font-weight:600;cursor:pointer}button:hover,label.button:hover{border-color:var(--teal)}button.primary{background:var(--teal);color:white;border-color:var(--teal)}button.danger{color:#a5353c}button:disabled{opacity:.45;cursor:default}button.active{outline:2px solid var(--teal);background:#e9f8f5}input[type=text],textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px;font:inherit;color:var(--ink)}textarea{min-height:100px;resize:vertical}.field-label{font-size:12px;font-weight:700;color:var(--muted);display:block;margin:12px 0 5px}.pill{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:4px 8px;border-radius:999px}.settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.check{display:flex;gap:7px;align-items:center;color:var(--muted);font-size:13px}.stats{font-size:13px;color:var(--muted);margin:8px 0}.help{font-size:13px;color:var(--muted);margin:8px 0}.exports{margin-top:12px}.status{min-height:20px;color:var(--teal);font-size:13px;margin-top:10px}.file-input{display:none}h2{font-size:16px;margin:0 0 8px}.right-col .panel+ .panel{margin-top:14px}.small{font-size:12px;color:var(--muted)}
+@media(max-width:900px){main{grid-template-columns:1fr}.canvas-wrap{width:min(100%,700px)}header{padding:16px}}
+</style>
+</head>
+<body>
+<header><h1>Arabic Trace Studio</h1><p>Draw each letter exactly as you want it traced. The tool records the raw points and the order of every stroke.</p></header>
+<main>
+<section class="panel">
+  <div class="nav"><button id="prev">← Previous</button><div class="where" id="where"></div><button id="next">Next →</button></div>
+  <div class="toolbar"><button id="drawMode" class="active">✎ Draw stroke</button><button id="dotMode">• Place dot</button><button id="undo">Undo last</button><button id="clear" class="danger">Clear letter</button><span class="pill" id="autosave">Saved locally</span></div>
+  <div class="canvas-wrap"><canvas id="board" width="1000" height="1000" aria-label="Square letter drawing canvas"></canvas></div>
+  <p class="canvas-note">Use Apple Pencil, finger, or mouse. Each pen-down is saved as a separate stroke; dots are separate ordered marks.</p>
+  <div class="stats" id="stats"></div>
+</section>
+<aside class="right-col">
+  <section class="panel">
+    <h2>Letters / shapes</h2><p class="help">Paste one item per line, up to 200 or more. Existing drawings with matching labels are retained.</p>
+    <label class="field-label" for="labels">Ordered labels</label><textarea id="labels" placeholder="ain-alone&#10;ain-fatha&#10;ain-damma"></textarea>
+    <div class="row"><button id="applyLabels" class="primary">Set list</button><button id="addLabel">Add next item</button></div>
+    <label class="field-label" for="labelEdit">Current item label</label><input id="labelEdit" type="text">
+    <div class="settings" style="margin-top:12px"><label class="check"><input id="gridToggle" type="checkbox" checked> Show grid</label><label class="check"><input id="arrowToggle" type="checkbox" checked> Show direction arrows</label><label class="check"><input id="numberToggle" type="checkbox" checked> Number strokes</label></div>
+    <div class="status" id="status"></div>
+  </section>
+  <section class="panel">
+    <h2>Save and export</h2><p class="help">Your work autosaves in this browser. Export the project JSON as your editable backup; the Swift export contains normalized coordinates in the recorded motion order.</p>
+    <div class="exports"><button id="exportJSON" class="primary">Download project JSON</button><button id="exportSwift">Download Swift paths</button><button id="copySwift">Copy Swift</button></div>
+    <div class="exports"><button id="importProject">Open saved project JSON</button><input class="file-input" type="file" id="filePicker" accept="application/json,.json"></div>
+    <p class="small">Coordinates use a 0–1 range with origin at the top left. No point simplification or smoothing is applied.</p>
+  </section>
+</aside>
+</main>
+<script>
+(()=>{
+const STORE='arabic-trace-point-capture-v1', W=1000, H=1000;
+const $=id=>document.getElementById(id), canvas=$('board'), ctx=canvas.getContext('2d');
+let project={version:1,coordinateSystem:'normalized-0-to-1-origin-top-left',items:[]}, index=0, mode='draw', active=null;
+function current(){return project.items[index]}
+function cleanLabel(s){return s.trim()}
+function persist(){try{localStorage.setItem(STORE,JSON.stringify(project));$('autosave').textContent='Saved locally'}catch(e){$('autosave').textContent='Local save unavailable'} updateStats()}
+function normalizeItem(x){return {label:String(x.label??'Letter'),strokes:Array.isArray(x.strokes)?x.strokes.map(s=>({kind:s.kind==='dot'?'dot':'stroke',points:Array.isArray(s.points)?s.points.map(p=>({x:+p.x,y:+p.y})):[]})):[]}}
+try{const saved=JSON.parse(localStorage.getItem(STORE)||'null');if(saved&&Array.isArray(saved.items))project={...saved,items:saved.items.map(normalizeItem)}}catch{}
+if(!project.items.length)project.items=[{label:'ain-alone',strokes:[]}];
+function updateUI(){index=Math.max(0,Math.min(index,project.items.length-1));$('where').textContent=`${index+1} of ${project.items.length}`;$('prev').disabled=index===0;$('next').disabled=index===project.items.length-1;$('labelEdit').value=current().label;$('labels').value=project.items.map(x=>x.label).join('\n');draw();updateStats()}
+function updateStats(){if(!project.items.length)return;const it=current();$('stats').textContent=`${it.strokes.length} mark${it.strokes.length===1?'':'s'} · ${it.strokes.filter(s=>s.kind==='stroke').length} pen stroke${it.strokes.filter(s=>s.kind==='stroke').length===1?'':'s'} · ${it.strokes.reduce((a,s)=>a+s.points.length,0)} captured points`}
+function draw(){ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);if($('gridToggle').checked){ctx.strokeStyle='#eaf0f1';ctx.lineWidth=1;for(let p=100;p<W;p+=100){ctx.beginPath();ctx.moveTo(p,0);ctx.lineTo(p,H);ctx.stroke();ctx.beginPath();ctx.moveTo(0,p);ctx.lineTo(W,p);ctx.stroke()}ctx.strokeStyle='#cbd8da';ctx.lineWidth=2;ctx.strokeRect(1,1,W-2,H-2);ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke()}
+const it=current();if(!it)return;ctx.save();
+it.strokes.forEach((s,si)=>{const pts=s.points;if(!pts.length)return;const first=pts[0];if(s.kind==='dot'){ctx.fillStyle='#138c89';ctx.beginPath();ctx.arc(first.x*W,first.y*H,13,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('•',first.x*W,first.y*H);return}
+ctx.strokeStyle='#138c89';ctx.lineWidth=12;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(first.x*W,first.y*H);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x*W,pts[i].y*H);ctx.stroke();ctx.fillStyle='#e86f77';ctx.beginPath();ctx.arc(first.x*W,first.y*H,10,0,Math.PI*2);ctx.fill();if($('numberToggle').checked){ctx.fillStyle='#18334e';ctx.font='bold 22px system-ui';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText(String(si+1),first.x*W,first.y*H-14)}if($('arrowToggle').checked&&pts.length>2){const k=Math.max(1,Math.floor(pts.length*.65)),a=pts[k-1],b=pts[k];arrow(a.x*W,a.y*H,b.x*W,b.y*H)}});ctx.restore()}
+function arrow(x1,y1,x2,y2){const ang=Math.atan2(y2-y1,x2-x1),len=22;ctx.strokeStyle='#bd615f';ctx.fillStyle='#bd615f';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-len*Math.cos(ang-.48),y2-len*Math.sin(ang-.48));ctx.lineTo(x2-len*Math.cos(ang+.48),y2-len*Math.sin(ang+.48));ctx.closePath();ctx.fill()}
+function point(e){const r=canvas.getBoundingClientRect();const x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;return{x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))}}
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();canvas.setPointerCapture(e.pointerId);const p=point(e);if(mode==='dot'){current().strokes.push({kind:'dot',points:[p]});persist();draw();return}active={kind:'stroke',points:[p],pointerId:e.pointerId};current().strokes.push(active);draw()});
+canvas.addEventListener('pointermove',e=>{if(!active||active.pointerId!==e.pointerId)return;e.preventDefault();for(const q of e.getCoalescedEvents?.()||[e])active.points.push(point(q));draw()});
+function end(e){if(active&&active.pointerId===e.pointerId){active=null;persist();draw()}}canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);canvas.addEventListener('lostpointercapture',e=>{if(active&&active.pointerId===e.pointerId){active=null;persist()}});
+$('prev').onclick=()=>{if(index>0){index--;updateUI()}};$('next').onclick=()=>{if(index<project.items.length-1){index++;updateUI()}};
+function setMode(m){mode=m;$('drawMode').classList.toggle('active',m==='draw');$('dotMode').classList.toggle('active',m==='dot');canvas.style.cursor=m==='draw'?'crosshair':'cell'}$('drawMode').onclick=()=>setMode('draw');$('dotMode').onclick=()=>setMode('dot');
+$('undo').onclick=()=>{current().strokes.pop();persist();draw()};$('clear').onclick=()=>{current().strokes=[];persist();draw()};
+$('labelEdit').onchange=()=>{current().label=cleanLabel($('labelEdit').value)||`Item ${index+1}`;persist();updateUI()};
+$('applyLabels').onclick=()=>{const labels=$('labels').value.split(/\r?\n/).map(cleanLabel).filter(Boolean);if(!labels.length){$('status').textContent='Enter at least one label.';return}const old=new Map(project.items.map(it=>[it.label,it]));project.items=labels.map(label=>old.get(label)||{label,strokes:[]});index=Math.min(index,project.items.length-1);$('status').textContent=`Set ${labels.length} items; matching drawings were kept.`;persist();updateUI()};
+$('addLabel').onclick=()=>{const label=`Item ${project.items.length+1}`;project.items.push({label,strokes:[]});index=project.items.length-1;persist();updateUI()};
+['gridToggle','arrowToggle','numberToggle'].forEach(id=>$(id).onchange=draw);
+function download(name,data,type){const a=document.createElement('a'),u=URL.createObjectURL(new Blob([data],{type}));a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+$('exportJSON').onclick=()=>download('trace-point-capture.json',JSON.stringify(project,null,2),'application/json');
+function swift(){let out='import Foundation\n\n// Captured raw points. Coordinates are normalized (0...1), origin top-left.\n// Stroke array order is drawing order; each stroke preserves its recorded point order.\nstruct CapturedTracePath {\n    let label: String\n    let strokes: [CapturedTraceStroke]\n}\nenum CapturedTraceStroke {\n    case line([(Double, Double)])\n    case dot((Double, Double))\n}\n\nlet capturedTracePaths: [CapturedTracePath] = [\n';for(const it of project.items){out+=`    CapturedTracePath(label: ${JSON.stringify(it.label)}, strokes: [\n`;for(const s of it.strokes){if(s.kind==='dot'&&s.points.length){const p=s.points[0];out+=`        .dot((${p.x}, ${p.y})),\n`}else if(s.points.length){out+='        .line(['+s.points.map(p=>`(${p.x}, ${p.y})`).join(', ')+']),\n'}}out+='    ]),\n'}return out+']\n'}
+$('exportSwift').onclick=()=>download('CapturedTracePaths.swift',swift(),'text/plain');$('copySwift').onclick=async()=>{try{await navigator.clipboard.writeText(swift());$('status').textContent='Swift source copied.'}catch{$('status').textContent='Clipboard access is unavailable here; use Download Swift paths.'}};
+$('importProject').onclick=()=> $('filePicker').click();$('filePicker').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const data=JSON.parse(await f.text());if(!Array.isArray(data.items))throw Error('missing items');project={...data,items:data.items.map(normalizeItem)};if(!project.items.length)project.items=[{label:'ain-alone',strokes:[]}];index=0;persist();updateUI();$('status').textContent=`Loaded ${project.items.length} items.`}catch(err){$('status').textContent='Could not read that project JSON.'}e.target.value=''};
+document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')$('prev').click();if(e.key==='ArrowRight')$('next').click();if((e.key==='z'||e.key==='Z')&&(e.metaKey||e.ctrlKey)){$('undo').click();e.preventDefault()}});
+updateUI();
+})();
+</script>
+</body>
+</html>
